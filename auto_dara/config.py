@@ -65,6 +65,8 @@ class Settings:
     fom_gof_cutoff: float = 12.0
     fom_weight_threshold: float = 0.01
     fom_lattice_catastrophe: float = 0.5
+    check_elements: bool = True
+    optional_elements: str = ""
 
     def _precursor_elements(self) -> set:
         from pymatgen.core import Composition
@@ -81,5 +83,7 @@ class Settings:
         return "-".join(self.elements())
 
     def required_elements(self) -> set:
+        if not self.check_elements:
+            return set()
         req = self._precursor_elements() if self.precursors.strip() else self._system_elements(self.system)
-        return req - {"C", "H", "N", "O"}
+        return req - {"C", "H", "N", "O"} - self._system_elements(self.optional_elements)

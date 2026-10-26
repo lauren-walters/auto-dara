@@ -88,6 +88,20 @@ def _parsers():
     g.add_argument("--rpb", dest="rpb_threshold", type=float, help="min Rpb gain to accept a phase (default: auto)")
     g.add_argument("--cpus", type=int, help="CPU cores for the search")
 
+    fom = argparse.ArgumentParser(add_help=False)
+    g = fom.add_argument_group("figure of merit")
+    g.add_argument(
+        "--no-element-check",
+        dest="check_elements",
+        action="store_false",
+        default=None,
+        help="do not require every precursor element to appear in a phase",
+    )
+    g.add_argument(
+        "--optional-elements",
+        help='elements that may appear in no phase, e.g. "K" for a K2CO3 flux or "Mg" for a dopant',
+    )
+
     out = argparse.ArgumentParser(add_help=False)
     out.add_argument(
         "-o",
@@ -102,11 +116,11 @@ def _parsers():
     )
     sub = root.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser(
-        "search", parents=[chem, cand, ref, prm, srch, out], help="build candidates, search, rank by FOM"
+        "search", parents=[chem, cand, ref, prm, srch, fom, out], help="build candidates, search, rank by FOM"
     )
     p.add_argument("patterns", nargs="+", help="pattern files or folders (.xrdml .xy .raw .rasx)")
     p = sub.add_parser("candidates", parents=[chem, cand, out], help="only build and filter the candidate CIFs")
-    p = sub.add_parser("manual", parents=[chem, ref, prm, out], help="refine a pattern with phases you choose")
+    p = sub.add_parser("manual", parents=[chem, ref, prm, fom, out], help="refine a pattern with phases you choose")
     p.add_argument("pattern", help="pattern file")
     p.add_argument(
         "phases",

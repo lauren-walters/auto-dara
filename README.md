@@ -67,6 +67,8 @@ auto-dara search scan.xrdml -p "La2O3, Fe2O3" -t LaFeO3 --temp "1100 C for 12 h"
 | `-i` | instrument profile; must match your diffractometer (default `Aeris-fds-Pixcel1d-Medipix3`) |
 | `--no-llm` | skip the LLM filter |
 | `--skip-filter` | rerun only the phase search on the scan's existing `cifs_considered/` (add or delete CIFs there first) |
+| `--optional-elements` | elements the FOM does not require in any phase, e.g. `"K"` for a K2CO3 flux or `"Mg"` for a dopant |
+| `--no-element-check` | turn off the FOM's element check: no element is required in any phase |
 
 Several patterns, or a folder, can be given at once if they share a chemical system. `auto-dara candidates ...`
 builds the candidate pool without searching.
