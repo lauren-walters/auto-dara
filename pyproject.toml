@@ -17,7 +17,7 @@ classifiers = [
 ]
 dependencies = [
     "dara-xrd>=1.2.0",
-    "numpy<2",
+    "numpy",
     "scipy<1.18",
     "pymatgen",
     "joblib",
