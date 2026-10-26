@@ -2,7 +2,9 @@
 
 import itertools
 import json
+import os
 import shutil
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -10,6 +12,9 @@ from .config import COD_CACHE, Settings
 
 ELEMENTAL_GASES = {"H", "He", "N", "O", "F", "Ne", "Cl", "Ar", "Br", "Kr", "Xe", "Rn"}
 COD_URL = "https://www.crystallography.net/cod/{}.cif"
+COD_ATTEMPTS = 3
+COD_RETRY_WAIT_S = 2  # times the attempt number
+COD_WORKERS = 4  # COD drops connections under many parallel requests
 SOURCE_PRIORITY = {"custom": 0, "icsd": 1, "cod": 2}
 
 
@@ -93,18 +98,45 @@ def _cod_reachable():
 
 
 def _fetch_cod(code):
+    """Returns (path, None) or (None, reason). Tries up to COD_ATTEMPTS times; a 404/410 is final."""
     import requests
 
     cached = COD_CACHE / f"{code}.cif"
     if cached.exists():
-        return cached
-    try:
-        r = requests.get(COD_URL.format(code), timeout=30)
-        r.raise_for_status()
-        cached.write_bytes(r.content)
-        return cached
-    except Exception:
-        return None
+        return cached, None
+    reason = None
+    for attempt in range(1, COD_ATTEMPTS + 1):
+        partial = cached.with_suffix(f".{os.getpid()}.part")  # other processes may share COD_CACHE
+        try:
+            r = requests.get(COD_URL.format(code), timeout=30)
+            if r.status_code in (404, 410):
+                return None, f"not on COD (HTTP {r.status_code})"
+            r.raise_for_status()
+            partial.write_bytes(r.content)
+            partial.replace(cached)
+            return cached, None
+        except Exception as exc:
+            partial.unlink(missing_ok=True)
+            reason = f"download failed after {attempt} attempt(s): {type(exc).__name__}"
+            if attempt < COD_ATTEMPTS:
+                time.sleep(COD_RETRY_WAIT_S * attempt)
+    return None, reason
+
+
+def _download_cod(codes, problems):
+    """Downloads `codes` into COD_CACHE; records why each one is missing in `problems`."""
+    COD_CACHE.mkdir(parents=True, exist_ok=True)
+    uncached = [c for c in codes if not (COD_CACHE / f"{c}.cif").exists()]
+    if uncached and not _cod_reachable():
+        problems.update({c: "COD unreachable" for c in uncached})
+        codes = [c for c in codes if c not in uncached]
+    with ThreadPoolExecutor(COD_WORKERS) as pool:
+        fetched = dict(zip(codes, pool.map(_fetch_cod, codes), strict=True))
+    problems.update({c: reason for c, (_, reason) in fetched.items() if reason})
+    if problems:
+        print(f"  warning: {len(problems)} COD structure(s) not available (listed in filter_report.md); "
+              "a local COD copy avoids this, see `auto-dara mirror-cod`")
+    return {c: path for c, (path, _) in fetched.items() if path}
 
 
 def _stage_db(entries, s, stage_dir, log):
@@ -112,24 +144,21 @@ def _stage_db(entries, s, stage_dir, log):
 
     cod = CODDatabase()
     cod_codes = [e["code"] for e in entries if e["source"] == "cod"]
-    cod_files = {}
+    cod_files, problems = {}, {}
     if cod_codes:
         if cod.local_copy_found:
-            cod_files = {c: cod.get_file_path(c) for c in cod_codes}
-        else:
-            COD_CACHE.mkdir(parents=True, exist_ok=True)
-            uncached = [c for c in cod_codes if not (COD_CACHE / f"{c}.cif").exists()]
-            if uncached and not _cod_reachable():
-                print(f"  warning: COD is unreachable; skipping {len(uncached)} uncached COD structure(s)")
-                cod_codes = [c for c in cod_codes if c not in uncached]
-            with ThreadPoolExecutor(8) as pool:
-                cod_files = dict(zip(cod_codes, pool.map(_fetch_cod, cod_codes), strict=True))
+            cod_files = {c: cod.get_file_path(c) for c in cod_codes if cod.get_file_path(c).exists()}
+        # anything the local copy lacks (or all of it, without one) is downloaded
+        missing = [c for c in cod_codes if c not in cod_files]
+        if missing:
+            cod_files.update(_download_cod(missing, problems))
 
     staged = []
     for e in entries:
         src = e.get("src") or cod_files.get(e["code"])
         if src is None or not Path(src).exists():
-            log.append(f"[missing] {e['formula']} {e['source']} {e['code']}: file not available")
+            reason = problems.get(e["code"], "file not available") if e["source"] == "cod" else "file not available"
+            log.append(f"[missing] {e['formula']} {e['source']} {e['code']}: {reason}")
             continue
         dest = stage_dir / f"{e['formula']}_{e['sg']}_{e['source']}_{e['code']}.cif"
         shutil.copy2(src, dest)

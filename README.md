@@ -52,6 +52,24 @@ Every setting is optional. To skip one, leave it empty (`ICSD_PATH=`).
 `.env` is read from the `auto-dara` folder or the folder you run from. `--icsd PATH` and `-o FOLDER` override it
 for one run. The first search against a new ICSD folder takes a few minutes to index it.
 
+## COD structures
+
+COD candidates come from the roughly 62,000 COD entries in dara's index. There are two ways to get them:
+
+- **Download as needed (no setup).** Each search downloads the COD files it needs from crystallography.net and
+  caches them in `~/.cache/auto-dara/cod`. Fine for a few patterns. A file that cannot be downloaded is left out
+  of the pool and listed in that scan's `filter_report.md`.
+- **Local copy (recommended if you run many patterns).** Copy all of them once; searches then never contact COD:
+
+  ```bash
+  auto-dara mirror-cod              # into ~/COD_2024, where dara looks by default
+  auto-dara mirror-cod /data/COD    # elsewhere; then add DARA_PATH_TO_COD=/data/COD to .env
+  ```
+
+  Needs `rsync` (on Windows, run it in WSL), about 1.5 GB of disk, and access to www.crystallography.net on
+  port 873 (rsync's port), which some networks block. Tested with rsync 3.2 on Linux. It can be rerun to fill in
+  anything missing, and any file the copy lacks is downloaded during the search as above.
+
 ## Search
 
 ```bash

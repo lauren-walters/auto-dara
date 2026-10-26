@@ -15,7 +15,7 @@ from pathlib import Path
 
 from .config import Settings
 
-COMMANDS = {"search", "manual", "batch", "candidates", "pretty", "instruments", "params", "-h", "--help"}
+COMMANDS = {"search", "manual", "batch", "candidates", "pretty", "mirror-cod", "instruments", "params", "-h", "--help"}
 
 
 def _parsers():
@@ -135,6 +135,15 @@ def _parsers():
     p.add_argument("pkls", nargs="+", type=Path, help="result .pkl files, e.g. results/scan/scan_rank0.pkl")
     p.add_argument("--xlim", nargs=2, type=float, metavar=("MIN", "MAX"), help="2-theta range (default: all)")
     p.add_argument("-o", "--out", type=Path, default=Path("."), help="output folder (default: current folder)")
+    p = sub.add_parser("mirror-cod", help="copy the COD structures dara can use to this machine (rsync, ~1.5 GB)")
+    p.add_argument(
+        "dest",
+        nargs="?",
+        type=Path,
+        default=Path(os.environ.get("DARA_PATH_TO_COD") or "~/COD_2024"),
+        help="folder for the copy (default: $DARA_PATH_TO_COD or ~/COD_2024, where dara looks by default)",
+    )
+    p.add_argument("--bwlimit", type=int, default=4000, help="rsync bandwidth cap in KB/s (default: 4000)")
     sub.add_parser("instruments", help="list the instrument profiles you can pass to -i")
     sub.add_parser("params", help="show the default refinement parameters and what they mean")
     return root
@@ -145,6 +154,18 @@ def _instruments():
 
     print("\n".join(list_profiles()))
     print("\nUse one with -i NAME. Default: Aeris-fds-Pixcel1d-Medipix3.")
+
+
+def _mirror_cod(args):
+    from .cod_mirror import mirror
+
+    try:
+        mirror(args.dest, args.bwlimit)
+    except RuntimeError as exc:
+        sys.exit(f"Error: {exc}")
+    dest = args.dest.expanduser().resolve()
+    if dest != Path(os.environ.get("DARA_PATH_TO_COD") or "~/COD_2024").expanduser().resolve():
+        print(f"Add DARA_PATH_TO_COD={dest} to your .env so searches use it.")
 
 
 def _pretty(args):
@@ -200,6 +221,8 @@ def main(argv=None):
         return _params()
     if args.cmd == "pretty":
         return _pretty(args)
+    if args.cmd == "mirror-cod":
+        return _mirror_cod(args)
     try:
         sys.stdout.reconfigure(line_buffering=True)
     except Exception:
