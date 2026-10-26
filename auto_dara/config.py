@@ -60,6 +60,7 @@ class Settings:
     phase_params: dict = field(default_factory=lambda: dict(DEFAULT_PHASE_PARAMS))
     refinement_params: dict = field(default_factory=lambda: dict(DEFAULT_REFINEMENT_PARAMS))
     phase_overrides: dict = field(default_factory=dict)
+    search_phase_overrides: dict = field(default_factory=dict)
     cpus: int | None = None
 
     fom_gof_cutoff: float = 12.0

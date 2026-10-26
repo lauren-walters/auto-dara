@@ -13,6 +13,8 @@ from .config import Settings
 
 PATTERN_EXTS = {".xrdml", ".xy", ".raw", ".rasx"}
 DICT_FIELDS = ("phase_params", "refinement_params", "search_phase_params", "search_refinement_params")
+# where `-P PHASE:key=value` goes: manual refinement or the search
+PER_PHASE_FIELDS = {"phase_params": "phase_overrides", "search_phase_params": "search_phase_overrides"}
 _OPTIONAL_TYPES = {"rpb_threshold": float, "cpus": int, "custom_cifs": Path, "icsd_path": Path}
 
 
@@ -52,22 +54,23 @@ def settings_from(base: Settings, overrides: dict) -> Settings:
         base,
         **{k: dict(getattr(base, k)) for k in DICT_FIELDS},
         phase_overrides={k: dict(v) for k, v in base.phase_overrides.items()},
+        search_phase_overrides={k: dict(v) for k, v in base.search_phase_overrides.items()},
     )
     for f in dataclasses.fields(Settings):
         v = overrides.get(f.name)
         if v is None or v == "" or v == []:
             continue
-        if f.name == "phase_overrides" and isinstance(v, dict):
+        if f.name in PER_PHASE_FIELDS.values() and isinstance(v, dict):
             for phase, params in v.items():
-                s.phase_overrides.setdefault(phase, {}).update(params)
+                getattr(s, f.name).setdefault(phase, {}).update(params)
             continue
         if f.name in DICT_FIELDS:
             common, per_phase = (v, {}) if isinstance(v, dict) else parse_params(v)
             getattr(s, f.name).update(common)
-            if per_phase and f.name != "phase_params":
-                raise ValueError(f"per-phase parameters ({', '.join(per_phase)}:...) only work in manual refinement")
+            if per_phase and f.name not in PER_PHASE_FIELDS:
+                raise ValueError(f"per-phase values ({', '.join(per_phase)}:...) only work for phase parameters (-P)")
             for phase, params in per_phase.items():
-                s.phase_overrides.setdefault(phase, {}).update(params)
+                getattr(s, PER_PHASE_FIELDS[f.name]).setdefault(phase, {}).update(params)
             continue
         default = getattr(Settings(), f.name)
         if isinstance(v, str):

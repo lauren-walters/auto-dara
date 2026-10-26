@@ -82,11 +82,11 @@ def start_ray(cpus=None):
 
 
 def _save(result, fig, prefix: Path, cif_lookup: dict, row: dict, cif_dir_name=None):
-    joblib.dump(result, prefix.with_suffix(".pkl"))
+    joblib.dump(result, prefix.with_name(f"{prefix.name}.pkl"))
     fig.update_layout(title=f"{prefix.name}  Rwp {row['rwp']}  FOM {row['fom']}")
-    fig.write_html(prefix.with_suffix(".html"))
+    fig.write_html(prefix.with_name(f"{prefix.name}.html"))
     try:
-        fig.write_image(prefix.with_suffix(".png"), width=1400, height=800)
+        fig.write_image(prefix.with_name(f"{prefix.name}.png"), width=1400, height=800)
     except Exception as exc:
         print(f"  warning: PNG export failed ({exc})")
     row.update(pkl=f"{prefix.name}.pkl", html=f"{prefix.name}.html", png=f"{prefix.name}.png")
@@ -141,6 +141,30 @@ def cif_lookup(out_dir: Path) -> dict:
     return {p.stem: p for p in files}
 
 
+def matches_phase(stem: str, key: str) -> bool:
+    """`key` names a phase by its CIF stem or a prefix of it (`Fe2O3_167`), or, for your own CIFs, by the file's
+    original name (a custom CIF `my_phase.cif` is staged as `<formula>_<sg>_custom_my_phase.cif`)."""
+    return stem == key or stem.startswith(key + "_") or stem.endswith("_custom_" + key)
+
+
+def with_phase_overrides(pool: list, overrides: dict) -> list:
+    """The pool for dara's search: a CIF that `overrides` names becomes a RefinementPhase carrying those
+    parameters (on top of the search's phase parameters); every other CIF is passed as it is."""
+    from dara.refine import RefinementPhase
+
+    unused = [k for k in overrides if not any(matches_phase(Path(p).stem, k) for p in pool)]
+    if unused:
+        print(f"  warning: per-phase search parameters given for {unused}, which are not in the candidate pool")
+    phases = []
+    for p in pool:
+        extra = {}
+        for key, params in overrides.items():
+            if matches_phase(Path(p).stem, key):
+                extra.update(params)
+        phases.append(RefinementPhase(path=Path(p), params=extra) if extra else p)
+    return phases
+
+
 def search(pattern: Path, pool: list, s: Settings, out_dir: Path) -> list:
     from dara.search.core import search_phases
 
@@ -156,7 +180,7 @@ def search(pattern: Path, pool: list, s: Settings, out_dir: Path) -> list:
     t0 = time.time()
     results = search_phases(
         pattern_path=pattern,
-        phases=pool,
+        phases=with_phase_overrides(pool, s.search_phase_overrides),
         wavelength=s.wavelength,
         instrument_profile=s.instrument,
         max_phases=s.max_phases,
@@ -214,9 +238,9 @@ def manual(pattern: Path, cifs: list, s: Settings, out_dir: Path) -> dict:
         stem = Path(c).stem
         params[stem] = dict(s.phase_params)
         for prefix, extra in s.phase_overrides.items():
-            if stem == prefix or stem.startswith(prefix + "_"):
+            if matches_phase(stem, prefix):
                 params[stem].update(extra)
-    unused = [k for k in s.phase_overrides if not any(st == k or st.startswith(k + "_") for st in params)]
+    unused = [k for k in s.phase_overrides if not any(matches_phase(st, k) for st in params)]
     if unused:
         raise ValueError(f"per-phase parameters given for {unused}, which are not in this refinement")
 

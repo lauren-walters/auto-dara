@@ -93,6 +93,9 @@ slightly looser ones. Change them with `-P` (phase parameters) and `-R` (`eps1`,
 auto-dara manual scan.xrdml LaFeO3_62 Fe2O3_167 -o results -P k1=0_0^0.01 -P Fe2O3_167:lattice_range=0.05 -R eps2=0_-0.05^0.05
 ```
 
+A phase prefix works in a search too and changes only the candidates it names. For your own CIFs (`--cifs`) the
+name can also be the file name (`-P my_phase:lattice_range=0.05` for `my_cifs/my_phase.cif`).
+
 ## Instrument profiles
 
 `auto-dara instruments` lists them. Pick the one for your instrument model and slit setup (`fds` fixed

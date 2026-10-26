@@ -167,6 +167,7 @@ def _params():
 
 
 PARAMS_HELP = """Defaults. -P KEY=VALUE sets a phase parameter and -R KEY=VALUE sets eps1/eps2, for the command you run.
+-P PHASE:KEY=VALUE changes one phase only, in manual and in search.
   parameter      search         manual
 {table}
 
