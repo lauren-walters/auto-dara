@@ -140,6 +140,7 @@ results/
   summary.csv                   every solution for every scan
   <scan>/
     <scan>_rank0.html / .png    best solution (highest FOM); rank1, rank2 are next best
+    <scan>_rank0.json           the fit in plain text: phases, weight fractions, lattice (angstrom), Rwp, FOM
     <scan>_rank0.pkl            full dara result (joblib.load)
     <scan>_manual.*             latest manual refinement
     cifs_best/                  structures in the best solution
@@ -148,6 +149,9 @@ results/
     results.csv                 FOM, Rwp, phases, weight fractions
     settings.json               exactly what was run
 ```
+
+The `.html` plots load plotly.js from the web, so they need an internet connection to display.
+A search with no solution writes `<scan>_no_solution.json` instead of rank files.
 
 ## Citing
 

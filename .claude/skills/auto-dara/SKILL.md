@@ -40,8 +40,9 @@ auto-dara params                       # refinement parameter defaults and meani
 
 `<scan>_rank0.*` (best by FOM; dara numbers from 0), `_rank1.*`, ... ; `<scan>_manual.*` (latest manual
 refinement, replaced each time); `cifs_best/`; `cifs_considered/`; `filter_report.md`; `results.csv`;
-`settings.json`. Plus `OUT/summary.csv` across scans. Each result is `.html` (interactive), `.png` and `.pkl`
-(`joblib.load`). Don't invent other output files or folders.
+`settings.json`. Plus `OUT/summary.csv` across scans. Each result is `.html` (interactive, loads plotly.js from the web), `.png`, `.json`
+(phases, weight fractions, lattice in angstrom, Rwp, FOM) and `.pkl` (`joblib.load`). A search with no
+solution writes `<scan>_no_solution.json`. Don't invent other output files or folders.
 
 ## Rules that matter
 

@@ -1,6 +1,8 @@
 """Runs dara's phase search and manual refinements, ranks them by FOM, and saves the outputs."""
 
 import csv
+import hashlib
+import json
 import logging
 import os
 import re
@@ -10,6 +12,8 @@ import tempfile
 import time
 import warnings
 from contextlib import contextmanager
+from datetime import datetime
+from importlib import metadata
 from pathlib import Path
 
 import joblib
@@ -34,7 +38,19 @@ FIELDS = [
     "html",
     "png",
     "cifs",
+    "json",
 ]
+
+# CIF names are {formula}_{space group number}_{icsd|cod|custom}_{id}, see cifs.py
+_PHASE_NAME = re.compile(r"^(?P<formula>[^_]+)_(?P<sg>\d+)_(?P<db>icsd|cod|custom)_(?P<id>.+)$")
+FOM_PARTS = {
+    "gof": "gof_score",
+    "missing_peaks": "missing_peaks_score",
+    "extra_peaks": "extra_peaks_score",
+    "intensity_mismatch": "intensity_mismatch_score",
+    "element_presence": "element_presence_score",
+    "lattice": "lattice_strain_score",
+}
 
 
 def sample_name(pattern):
@@ -81,10 +97,113 @@ def start_ray(cpus=None):
         )
 
 
-def _save(result, fig, prefix: Path, cif_lookup: dict, row: dict, cif_dir_name=None):
+def _version(package):
+    try:
+        return metadata.version(package)
+    except metadata.PackageNotFoundError:
+        return None
+
+
+def _sha256(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _number(text):
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _value_and_uncertainty(x):
+    """dara gives a refined number either as a plain value or as (value, uncertainty)."""
+    if isinstance(x, (tuple, list)):
+        return float(x[0]), (float(x[1]) if len(x) > 1 and x[1] is not None else None)
+    return (None, None) if x is None else (float(x), None)
+
+
+def _lattice(phase):
+    """Lattice in angstrom and degrees. dara reports lengths in nm and leaves out values that the
+    space group fixes (e.g. 90 degree angles, b = a for tetragonal); those are filled in here."""
+    sg = phase.spacegroup_no or 0
+    lat, unc = {}, {}
+    for axis in ("a", "b", "c", "alpha", "beta", "gamma"):
+        value, error = _value_and_uncertainty(getattr(phase, axis, None))
+        scale = 10 if axis in "abc" else 1
+        lat[axis] = None if value is None else round(value * scale, 5)
+        unc[axis] = None if error is None else round(error * scale, 5)
+    if lat["b"] is None and sg >= 75:
+        lat["b"] = lat["a"]
+    if lat["c"] is None and sg >= 195:
+        lat["c"] = lat["a"]
+    if 143 <= sg <= 194 and lat["alpha"] is not None:  # rhombohedral axes: all angles equal
+        lat["beta"] = lat["beta"] if lat["beta"] is not None else lat["alpha"]
+        lat["gamma"] = lat["gamma"] if lat["gamma"] is not None else lat["alpha"]
+    for axis in ("alpha", "beta", "gamma"):
+        if lat[axis] is None and sg >= 3:
+            lat[axis] = 120.0 if (axis == "gamma" and 143 <= sg <= 194) else 90.0
+    return lat, unc
+
+
+def _phase_records(result):
+    weights = result.get_phase_weights()
+    phases = []
+    for name, phase in result.lst_data.phases_results.items():
+        parts = _PHASE_NAME.match(name)
+        lattice, uncertainty = _lattice(phase)
+        phases.append(
+            {
+                "name": name,
+                "formula": parts["formula"] if parts else None,
+                "spacegroup_number": phase.spacegroup_no,
+                "spacegroup_symbol": phase.hermann_mauguin,
+                "database": parts["db"] if parts else None,
+                "database_id": parts["id"] if parts else None,
+                "weight_fraction": round(float(weights[name]), 4),
+                "lattice": lattice,
+                "lattice_uncertainty": uncertainty,
+            }
+        )
+    return sorted(phases, key=lambda p: -p["weight_fraction"])
+
+
+def _fit_header(pattern, label, solution_found=True):
+    return {
+        "scan_file": Path(pattern).name,
+        "scan_sha256": _sha256(pattern),
+        "label": label,
+        "kind": "manual" if label == "manual" else "automated",
+        "solution_found": solution_found,
+        "made_by": {"auto_dara": _version("auto-dara"), "dara": _version("dara-xrd")},
+        "made_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+
+
+def _write_fit_json(prefix: Path, pattern, result, row: dict):
+    """One small, readable JSON per fit with everything needed to report it without the .pkl."""
+    lst = result.lst_data
+    record = {
+        **_fit_header(pattern, row["label"]),
+        "rwp": round(lst.rwp, 3),
+        "rexp": round(lst.rexp, 3),
+        "goodness_of_fit": round(lst.rwp / lst.rexp, 3) if lst.rexp else None,
+        "fom": _number(row.get("fom")),
+        "fom_parts": {name: _number(row.get(col)) for col, name in FOM_PARTS.items()},
+        "fom_note": "fom_parts are 0-1 scores (1 = best) that multiply to the FOM",
+        "lattice_units": "angstrom and degrees",
+        "phases": _phase_records(result),
+        "files": {k: row.get(k) or None for k in ("png", "html", "pkl", "cifs")},
+        "settings_file": "settings.json",
+    }
+    prefix.with_suffix(".json").write_text(json.dumps(record, indent=2))
+    row["json"] = f"{prefix.name}.json"
+
+
+def _save(result, fig, prefix: Path, cif_lookup: dict, row: dict, pattern, cif_dir_name=None):
     joblib.dump(result, prefix.with_suffix(".pkl"))
     fig.update_layout(title=f"{prefix.name}  Rwp {row['rwp']}  FOM {row['fom']}")
-    fig.write_html(prefix.with_suffix(".html"))
+    # load plotly.js from the web instead of embedding it: ~1 MB per file instead of ~6 MB
+    fig.write_html(prefix.with_suffix(".html"), include_plotlyjs="cdn")
     try:
         fig.write_image(prefix.with_suffix(".png"), width=1400, height=800)
     except Exception as exc:
@@ -98,6 +217,7 @@ def _save(result, fig, prefix: Path, cif_lookup: dict, row: dict, cif_dir_name=N
         for name, data in used.items():
             (cif_dir / f"{name}.cif").write_bytes(data)
         row["cifs"] = cif_dir_name
+    _write_fit_json(prefix, pattern, result, row)
 
 
 def _row(sample, label, result, scores):
@@ -170,7 +290,9 @@ def search(pattern: Path, pool: list, s: Settings, out_dir: Path) -> list:
     print(f"  search finished in {(time.time() - t0) / 60:.1f} min, {len(valid)} solution(s)")
     if not valid:
         print(f"  no solution found for {sample}")
-        _write_results(sample_dir, [{"sample": sample, "label": "rank0", "phases": "NO SOLUTION"}])
+        note = sample_dir / f"{sample}_no_solution.json"
+        note.write_text(json.dumps(_fit_header(pattern, "rank0", solution_found=False), indent=2))
+        _write_results(sample_dir, [{"sample": sample, "label": "rank0", "phases": "NO SOLUTION", "json": note.name}])
         return []
 
     for old in [*sample_dir.glob(f"{sample}_rank*"), sample_dir / "cifs_best"]:
@@ -191,6 +313,7 @@ def search(pattern: Path, pool: list, s: Settings, out_dir: Path) -> list:
             sample_dir / f"{sample}_rank{rank}",
             lookup,
             row,
+            pattern,
             "cifs_best" if rank == 0 else None,
         )
         rows.append(row)
@@ -235,7 +358,7 @@ def manual(pattern: Path, cifs: list, s: Settings, out_dir: Path) -> dict:
     lookup = {Path(c).stem: Path(c) for c in cifs}
     sc = fom.score(result, lookup, s.required_elements(), fom.total_peaks(pattern, s), s)
     row = _row(sample, "manual", result, sc)
-    _save(result, result.visualize(), sample_dir / f"{sample}_manual", lookup, row)
+    _save(result, result.visualize(), sample_dir / f"{sample}_manual", lookup, row, pattern)
     _write_results(sample_dir, [row])
     print(f"  manual: FOM {row['fom'] or 'n/a'}  Rwp {row['rwp']}  {row['phases']}")
     return row
